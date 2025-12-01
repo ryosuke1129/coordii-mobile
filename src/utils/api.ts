@@ -39,9 +39,9 @@ export const api = {
   updateCloth: (data: any) => client('/clothes', 'PUT', data),
   deleteCloth: (userId: string, clothId: number) => 
     client('/clothes', 'DELETE', { userId, clothId }),
-  analyzeCloth: (imageUrl: string, userId: string) => client('/analyze', 'POST', { imageUrl }),
+  analyzeCloth: (imageUrl: string, userId: string) => client('/analyze', 'POST', { imageUrl, userId }),
   getUploadUrl: (fileType: string = 'jpg') => client('/upload-url', 'POST', { fileType }),
-  createCoordinate: (userId: string) => client('/coordinates', 'POST', { userId }),
+  createCoordinate: (userId: string, anchorClothId?: number) =>  client('/coordinates', 'POST', { userId, anchorClothId }),
   getHistory: (userId: string) => client(`/coordinates?userId=${userId}`),
 };
 

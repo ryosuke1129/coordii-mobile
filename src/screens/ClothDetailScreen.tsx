@@ -1,17 +1,40 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, Image, TouchableOpacity, ScrollView, Alert, ActivityIndicator, TextInput, SafeAreaView, Platform, StatusBar, KeyboardAvoidingView, DeviceEventEmitter } from 'react-native';
+import React, { useState } from 'react';
+import { 
+  View, 
+  Text, 
+  Image, 
+  TouchableOpacity, 
+  ScrollView, 
+  Alert, 
+  ActivityIndicator, 
+  TextInput, 
+  SafeAreaView, 
+  Platform, 
+  StatusBar, 
+  KeyboardAvoidingView, 
+  DeviceEventEmitter,
+  Modal 
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import tw from 'twrnc';
 import { api } from '../utils/api';
-import { getUserId } from '../utils/user'; // ★追加
+import { getUserId } from '../utils/user';
+import ResultScreen from './ResultScreen'; // ★MVP2追加: 結果表示用
 
 export default function ClothDetailScreen({ route, navigation }: any) {
   const { cloth } = route.params;
   
+  // --- 既存ステート ---
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState(cloth);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // --- ★MVP2追加ステート: コーデ生成用 ---
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [coordResult, setCoordResult] = useState(null);
+  const [showResult, setShowResult] = useState(false);
+
+  // --- 既存機能: 削除 ---
   const handleDelete = () => {
     Alert.alert(
       "確認",
@@ -27,7 +50,6 @@ export default function ClothDetailScreen({ route, navigation }: any) {
               const userId = await getUserId();
               if (!userId) throw new Error("User ID not found");
 
-              // ★修正: userIdを使用
               await api.deleteCloth(userId, cloth.clothId);
               
               DeviceEventEmitter.emit('CLOTHES_UPDATED');
@@ -44,13 +66,13 @@ export default function ClothDetailScreen({ route, navigation }: any) {
     );
   };
 
+  // --- 既存機能: 更新 ---
   const handleUpdate = async () => {
     setIsProcessing(true);
     try {
       const userId = await getUserId();
       if (!userId) throw new Error("User ID not found");
 
-      // ★修正: userIdを使用
       await api.updateCloth({
         userId: userId,
         clothId: cloth.clothId,
@@ -68,8 +90,44 @@ export default function ClothDetailScreen({ route, navigation }: any) {
     }
   };
 
+  // --- ★MVP2追加機能: この服を使ってコーデを作成 ---
+  const handleCreateCoord = () => {
+    const currentHour = new Date().getHours();
+    const dayLabel = currentHour >= 19 ? "明日" : "今日";
+
+    Alert.alert(
+      "コーデ作成",
+      `この「${cloth.category}」を使って\n${dayLabel}のコーデを提案しますか？`,
+      [
+        { text: "キャンセル", style: "cancel" },
+        {
+          text: "開始",
+          onPress: async () => {
+            setIsGenerating(true);
+            try {
+              const userId = await getUserId();
+              if (!userId) throw new Error("User ID not found");
+
+              const result = await api.createCoordinate(userId, cloth.clothId);
+              
+              setCoordResult(result);
+              setShowResult(true);
+              
+              DeviceEventEmitter.emit('REFRESH_HOME');
+            } catch (e: any) {
+              Alert.alert("エラー", "コーデ作成に失敗しました: " + e.message);
+            } finally {
+              setIsGenerating(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   return (
     <View style={tw`flex-1 bg-white`}>
+      {/* ヘッダー */}
       <View style={tw`bg-[#00255C]`}>
         <SafeAreaView>
           <View style={[
@@ -91,6 +149,8 @@ export default function ClothDetailScreen({ route, navigation }: any) {
 
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={tw`flex-1`}>
         <ScrollView contentContainerStyle={tw`p-6 pb-40`}>
+          
+          {/* 画像表示エリア */}
           <View style={tw`items-center mb-8`}>
             <Image 
               source={{ uri: cloth.imageUrl }} 
@@ -98,6 +158,18 @@ export default function ClothDetailScreen({ route, navigation }: any) {
             />
           </View>
 
+          {/* ★MVP2追加: コーデ作成ボタン (閲覧モード時のみ表示) */}
+          {!isEditing && (
+            <TouchableOpacity
+              onPress={handleCreateCoord}
+              style={tw`mb-8 bg-white border-2 border-[#00255C] py-4 rounded-xl flex-row justify-center items-center shadow-sm`}
+            >
+              <Ionicons name="sparkles" size={20} color="#00255C" style={{ marginRight: 8 }} />
+              <Text style={tw`text-[#00255C] text-center text-lg font-bold`}>この服でコーデを作る</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* 詳細情報 / 編集フォーム */}
           {isEditing ? (
             <View style={tw`gap-4`}>
               <EditRow label="カテゴリ" value={editData.category} onChange={(t:string) => setEditData({...editData, category: t})} />
@@ -142,6 +214,7 @@ export default function ClothDetailScreen({ route, navigation }: any) {
         </ScrollView>
       </KeyboardAvoidingView>
 
+      {/* フッターボタン (更新/削除) */}
       <View style={tw`absolute bottom-0 w-full p-6 bg-white border-t border-gray-100 flex-row gap-4`}>
         {isEditing ? (
           <TouchableOpacity 
@@ -168,10 +241,34 @@ export default function ClothDetailScreen({ route, navigation }: any) {
           </TouchableOpacity>
         )}
       </View>
+
+      {/* ★MVP2追加: 生成中ローディングオーバーレイ */}
+      <Modal visible={isGenerating} transparent animationType="fade">
+        <View style={[
+          tw`absolute inset-0 bg-black/50 items-center justify-center z-50`,
+          { width: '100%', height: '100%' }
+        ]}>
+          <View style={tw`bg-white p-8 rounded-2xl items-center`}>
+            <ActivityIndicator size="large" color="#00255C" />
+            <Text style={tw`mt-4 font-bold text-gray-700 text-center`}>
+              この服に合わせて{'\n'}AIがコーデを考え中...
+            </Text>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ★MVP2追加: 結果表示画面 */}
+      <ResultScreen 
+        visible={showResult} 
+        onClose={() => setShowResult(false)} 
+        resultData={coordResult} 
+      />
+
     </View>
   );
 }
 
+// サブコンポーネント (変更なし)
 const DetailRow = ({ label, value }: { label: string, value: string }) => (
   <View style={tw`flex-row justify-between items-center py-3 border-b border-gray-100`}>
     <Text style={tw`text-gray-400 font-bold text-sm`}>{label}</Text>
