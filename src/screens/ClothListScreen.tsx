@@ -1,12 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, Image, TouchableOpacity, ActivityIndicator, LayoutAnimation, Platform, UIManager, Alert, Modal, TextInput, KeyboardAvoidingView, SafeAreaView, StatusBar, DeviceEventEmitter, RefreshControl } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import React, { useState, useEffect } from 'react';
+import { 
+  View, Text, ScrollView, Image, TouchableOpacity, ActivityIndicator, 
+  LayoutAnimation, Platform, UIManager, Alert, Modal, TextInput, 
+  KeyboardAvoidingView, SafeAreaView, StatusBar, DeviceEventEmitter, 
+  RefreshControl 
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import tw from 'twrnc';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, uploadToS3 } from '../utils/api';
 import { getUserId } from '../utils/user';
+import OnboardingTooltip from '../components/OnboardingTooltip';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -20,13 +25,45 @@ export default function ClothListScreen({ navigation }: any) {
   const [expanded, setExpanded] = useState<{ [key: string]: boolean }>({});
   
   const [isLoading, setIsLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false); // ★追加: リフレッシュ中フラグ
+  const [refreshing, setRefreshing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processMessage, setProcessMessage] = useState("");
 
   const [showConfirm, setShowConfirm] = useState(false);
   const [editData, setEditData] = useState<any>(null);
   const [tempImageUrl, setTempImageUrl] = useState("");
+  
+  // ガイド表示用ステート
+  const [showCameraGuide, setShowCameraGuide] = useState(false);
+
+  // --- 初期化ロジック (統合版) ---
+  useEffect(() => {
+    // 1. 初回データロード
+    fetchAllClothes(false);
+    
+    // 2. ガイド表示チェック
+    checkCameraGuide();
+
+    // 3. 更新イベントの購読 (詳細画面や削除時の反映)
+    const updateSub = DeviceEventEmitter.addListener('CLOTHES_UPDATED', () => {
+      fetchAllClothes(true);
+    });
+
+    return () => updateSub.remove();
+  }, []);
+
+  // --- ガイド表示チェック ---
+  const checkCameraGuide = async () => {
+    const hasSeen = await AsyncStorage.getItem('HAS_SEEN_CAMERA_GUIDE');
+    if (!hasSeen) {
+      setTimeout(() => setShowCameraGuide(true), 500);
+    }
+  };
+
+  const dismissCameraGuide = async () => {
+    setShowCameraGuide(false);
+    await AsyncStorage.setItem('HAS_SEEN_CAMERA_GUIDE', 'true');
+  };
 
   // --- データ取得 ---
   const fetchAllClothes = async (forceRefresh = false) => {
@@ -36,6 +73,7 @@ export default function ClothListScreen({ navigation }: any) {
         if (cached) {
           setLoadedData(JSON.parse(cached));
           setIsLoading(false);
+          // キャッシュがあっても裏で更新するかは要件次第ですが、通信削減のためここではreturn
           return;
         }
       }
@@ -64,20 +102,12 @@ export default function ClothListScreen({ navigation }: any) {
     }
   };
 
-  // --- ★追加: 引っ張って更新 ---
+  // --- 引っ張って更新 ---
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchAllClothes(true); // キャッシュを無視して再取得
+    await fetchAllClothes(true);
     setRefreshing(false);
   };
-
-  useEffect(() => {
-    fetchAllClothes(false);
-    const updateSub = DeviceEventEmitter.addListener('CLOTHES_UPDATED', () => {
-      fetchAllClothes(true);
-    });
-    return () => updateSub.remove();
-  }, []);
 
   const toggleCategory = (category: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -114,6 +144,8 @@ export default function ClothListScreen({ navigation }: any) {
       return;
     }
     setShowConfirm(false);
+    
+    // 少し待ってから処理開始 (モーダル閉じアニメーション待ち)
     setTimeout(async () => {
       setIsProcessing(true);
       setProcessMessage("登録しています...");
@@ -126,8 +158,16 @@ export default function ClothListScreen({ navigation }: any) {
           imageUrl: tempImageUrl,
           ...editData 
         });
+        
         await fetchAllClothes(true);
         setIsProcessing(false);
+        
+        // 初回アップロード完了を通知 (App.tsxで検知してガイドを表示)
+        const hasSeenCoordGuide = await AsyncStorage.getItem('HAS_SEEN_COORD_GUIDE');
+        if (!hasSeenCoordGuide) {
+            DeviceEventEmitter.emit('FIRST_UPLOAD_DONE');
+        }
+
         setTimeout(() => {
           Alert.alert("完了", "洋服を登録しました！", [
             {
@@ -146,7 +186,9 @@ export default function ClothListScreen({ navigation }: any) {
     }, 500);
   };
 
+  // --- カメラ/アルバム選択 ---
   const handleAddCloth = () => {
+    dismissCameraGuide();
     Alert.alert(
       "洋服を追加",
       "写真の追加方法を選択してください",
@@ -184,7 +226,7 @@ export default function ClothListScreen({ navigation }: any) {
     <View style={tw`flex-1 bg-gray-50`}>
       <ScrollView 
         contentContainerStyle={tw`pb-32 pt-4 px-4`}
-        refreshControl={ // ★追加: リフレッシュコントロール
+        refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#00255C']} tintColor={'#00255C'} />
         }
       >
@@ -231,12 +273,23 @@ export default function ClothListScreen({ navigation }: any) {
         <View style={tw`h-10`} />
       </ScrollView>
 
+      {/* フローティングアクションボタン (FAB) */}
       <View style={tw`absolute bottom-6 right-6`}>
         <TouchableOpacity onPress={handleAddCloth} style={[tw`bg-[#00255C] w-14 h-14 rounded-full items-center justify-center`, { shadowColor: "#00255C", shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 4, elevation: 5 }]}>
           <Ionicons name="camera" size={28} color="white" />
         </TouchableOpacity>
       </View>
 
+      {/* オンボーディングツールチップ */}
+      {showCameraGuide && !isLoading && (
+        <OnboardingTooltip 
+          text="ここからあなたの洋服を追加できます！📷"
+          position="bottom-right-fab"
+          onPress={dismissCameraGuide}
+        />
+      )}
+
+      {/* ロード中モーダル */}
       <Modal visible={isProcessing} transparent animationType="fade">
         <View style={tw`flex-1 bg-black/50 items-center justify-center`}>
           <View style={tw`bg-white p-6 rounded-2xl items-center w-64`}>
@@ -246,6 +299,7 @@ export default function ClothListScreen({ navigation }: any) {
         </View>
       </Modal>
 
+      {/* 登録確認モーダル */}
       <Modal visible={showConfirm} animationType="slide">
         <View style={tw`flex-1 bg-white`}>
           <View style={tw`bg-[#00255C]`}>
