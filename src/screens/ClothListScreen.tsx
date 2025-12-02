@@ -32,6 +32,7 @@ export default function ClothListScreen({ navigation }: any) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [editData, setEditData] = useState<any>(null);
   const [tempImageUrl, setTempImageUrl] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
   
   // ガイド表示用ステート
   const [showCameraGuide, setShowCameraGuide] = useState(false);
@@ -120,8 +121,10 @@ export default function ClothListScreen({ navigation }: any) {
     setProcessMessage("画像をアップロードして\nAI解析中...");
     
     try {
-      const { uploadUrl, imageUrl } = await api.getUploadUrl('jpg');
+      const response = await api.getUploadUrl('jpg');
+      const { uploadUrl, imageUrl, downloadUrl } = response;
       setTempImageUrl(imageUrl);
+      setPreviewUrl(downloadUrl);
       await uploadToS3(uploadUrl, uri);
       
       const userId = await getUserId();
@@ -315,7 +318,7 @@ export default function ClothListScreen({ navigation }: any) {
             <ScrollView contentContainerStyle={tw`p-6 pb-40`}>
               <Text style={tw`text-center font-bold text-gray-700 mb-6`}>これで登録しますか？</Text>
               <View style={tw`items-center mb-8`}>
-                {tempImageUrl ? <Image source={{ uri: tempImageUrl }} style={[tw`w-40 h-40 rounded-xl bg-gray-100`, { resizeMode: 'cover' }]} /> : <View style={tw`items-center mb-8 h-40 justify-center`}><ActivityIndicator color="#00255C" /></View>}
+                {tempImageUrl ? <Image source={{ uri: previewUrl }} style={[tw`w-40 h-40 rounded-xl bg-gray-100`, { resizeMode: 'cover' }]} /> : <View style={tw`items-center mb-8 h-40 justify-center`}><ActivityIndicator color="#00255C" /></View>}
               </View>
               {editData && (
                 <View style={tw`gap-4`}>

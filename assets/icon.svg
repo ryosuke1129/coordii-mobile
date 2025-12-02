@@ -1,0 +1,27 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad3d" x1="15%" y1="15%" x2="85%" y2="85%">
+      <stop offset="0%" stop-color="#1E4D8C" /> <stop offset="50%" stop-color="#00255C" /> <stop offset="100%" stop-color="#00122E" /> </linearGradient>
+
+    <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="12" dy="20" stdDeviation="24" flood-color="#001533" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" fill="#FFFFFF"/>
+  
+  <g transform="translate(542, 512) scale(0.8) translate(-512, -512)">
+    
+    <path d="M 780 230 A 400 400 0 1 0 780 794" 
+          stroke="url(#grad3d)" 
+          stroke-width="180" 
+          fill="none" 
+          stroke-linecap="round"
+          filter="url(#softShadow)"/>
+    
+    <circle cx="880" cy="512" r="70" 
+            fill="url(#grad3d)" 
+            filter="url(#softShadow)"/>
+            
+  </g>
+</svg>

@@ -1,6 +1,5 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react'; // useRef追加
+import React, { useState, useEffect } from 'react'; // useCallback, useRef, useFocusEffect は削除
 import { Text, View, ScrollView, Image, ActivityIndicator, RefreshControl, DeviceEventEmitter, TouchableOpacity } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import tw from 'twrnc';
 import { api } from '../utils/api';
@@ -22,23 +21,61 @@ export default function HomeScreen({ route, navigation }: any) {
     return new Date().getHours() >= 19 ? '明日の天気' : '今日の天気';
   });
 
-  // ★追加: 初回ロード済みかどうかのフラグ
-  const isLoaded = useRef(false);
-
   const WEATHER_CACHE_KEY = 'WEATHER_CACHE';
   const HISTORY_CACHE_KEY = 'HISTORY_CACHE';
 
+  // --- 1. アプリ起動時の初期化 (キャッシュ復元 -> API取得) ---
+  useEffect(() => {
+    const init = async () => {
+      let activeRegion = currentRegion;
+
+      // A. キャッシュから復元 (即時表示)
+      try {
+        // 天気・地域
+        const weatherCache = await AsyncStorage.getItem(WEATHER_CACHE_KEY);
+        if (weatherCache) {
+          const { data, savedRegion, savedLabel } = JSON.parse(weatherCache);
+          
+          // キャッシュに地域があれば、それを正として採用
+          if (savedRegion) {
+            activeRegion = savedRegion;
+            setCurrentRegion(savedRegion);
+          }
+          
+          // 日付ラベルが合っていれば天気を表示
+          const currentHour = new Date().getHours();
+          const currentLabel = currentHour >= 19 ? '明日の天気' : '今日の天気';
+          if (savedLabel === currentLabel) {
+            setWeather(data);
+          }
+        }
+
+        // 履歴
+        const historyCache = await AsyncStorage.getItem(HISTORY_CACHE_KEY);
+        if (historyCache) {
+          setHistory(JSON.parse(historyCache));
+        }
+      } catch (e) {
+        console.error("Cache restore error:", e);
+      }
+
+      // B. 最新データをAPIから取得 (裏で更新)
+      // キャッシュ復元で確定した activeRegion を使う
+      const uid = await getUserId();
+      if (uid) {
+        await loadData(uid, activeRegion, true);
+      }
+    };
+
+    init();
+  }, []); // 初回マウント時のみ実行
+
+  // --- データ取得関数 ---
   const loadData = async (userId: string, city: string, forceRefresh = false) => {
-    // ローディング表示は、リフレッシュ時か、データが全くない時だけ出す
-    if (!weather && !history.length) {
-      // 必要であればここでローディングstateを操作
-    }
-    
     await Promise.all([
       fetchWeather(userId, city, forceRefresh), 
       fetchHistory(userId, forceRefresh)
     ]);
-    isLoaded.current = true; // ロード完了
   };
 
   const fetchWeather = async (userId: string, city: string, forceRefresh = false) => {
@@ -60,6 +97,7 @@ export default function HomeScreen({ route, navigation }: any) {
 
       const data = await api.getWeather(userId, city);
       setWeather(data);
+      
       await AsyncStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify({ 
         data, 
         savedRegion: city, 
@@ -67,7 +105,7 @@ export default function HomeScreen({ route, navigation }: any) {
       }));
 
     } catch (e) {
-      console.error(e);
+      console.error("Fetch weather error:", e);
     }
   };
 
@@ -77,31 +115,31 @@ export default function HomeScreen({ route, navigation }: any) {
         const cached = await AsyncStorage.getItem(HISTORY_CACHE_KEY);
         if (cached) {
           setHistory(JSON.parse(cached));
-          // キャッシュがあっても、裏で最新を取りに行く戦略もアリ（今回は通信削減のため省略）
-          if (isLoaded.current) return; 
+          return;
         }
       }
-
       const data = await api.getHistory(userId);
       setHistory(data);
       await AsyncStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(data));
-      
     } catch (e) {
-      console.error(e);
+      console.error("Fetch history error:", e);
     }
   };
 
-  // --- 初期化とイベント ---
-
-  // ★修正: useEffectでのロードを廃止し、イベントリスナー登録のみにする
+  // --- イベント設定 ---
   useEffect(() => {
     const refreshSub = DeviceEventEmitter.addListener('REFRESH_HOME', async () => {
       const uid = await getUserId();
       if (uid) fetchHistory(uid, true);
     });
     
+    // 設定画面で地域が変わった時の即時反映
     const regionSub = DeviceEventEmitter.addListener('REGION_CHANGED', (newRegion) => {
       setCurrentRegion(newRegion);
+      // 即座にAPIリロード
+      getUserId().then(uid => {
+        if (uid) loadData(uid, newRegion, true);
+      });
     });
 
     // 定期更新 (19時切り替え)
@@ -109,6 +147,7 @@ export default function HomeScreen({ route, navigation }: any) {
       const now = new Date();
       const hour = now.getHours();
       const newLabel = hour >= 19 ? '明日の天気' : '今日の天気';
+      
       if (newLabel !== dateLabel) {
         const uid = await getUserId();
         if (uid) loadData(uid, currentRegion, true);
@@ -120,38 +159,21 @@ export default function HomeScreen({ route, navigation }: any) {
       regionSub.remove();
       clearInterval(intervalId);
     };
-  }, [dateLabel]); 
+  }, [dateLabel, currentRegion]); 
 
-  // ★修正: useEffect [currentRegion] を削除し、useFocusEffectに統合
-  // useFocusEffectは「画面が表示された時」に必ず走るため、初回マウント時もカバーできます。
-  useFocusEffect(
-    useCallback(() => {
-      const checkUpdates = async () => {
-        const uid = await getUserId();
-        if (uid) {
-          // ユーザー情報取得 (地域特定)
-          try {
-            // ここで毎回getUserするのは重いので、キャッシュ戦略またはState管理が望ましいですが
-            // MVPでは一旦「currentRegion」を信じる形にします
-            // もし地域が変わっていたら再ロード
-             loadData(uid, currentRegion, false);
-          } catch (e) {
-             loadData(uid, currentRegion, false);
-          }
-        }
-      };
-      checkUpdates();
-    }, [currentRegion]) // 地域が変わった時、またはフォーカス時に実行
-  );
-
+  // --- 引っ張って更新 ---
   const onRefresh = async () => {
     setRefreshing(true);
     const uid = await getUserId();
     if (uid) {
+      // リフレッシュ時は、念のためサーバーの最新ユーザー情報から地域を確認する
       try {
         const user = await api.getUser(uid);
         const savedRegion = user.address || currentRegion;
-        setCurrentRegion(savedRegion);
+        
+        if (savedRegion !== currentRegion) {
+          setCurrentRegion(savedRegion);
+        }
         await loadData(uid, savedRegion, true);
       } catch {
         await loadData(uid, currentRegion, true);
@@ -169,7 +191,6 @@ export default function HomeScreen({ route, navigation }: any) {
           contentContainerStyle={tw`pt-6 pb-40`}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#00255C']} tintColor={'#00255C'} />}
         >
-          {/* ... (UI部分は変更なし) ... */}
           
           <Text style={tw`font-bold text-gray-700 mb-2 ml-1 text-sm`}>{dateLabel} ({currentRegion})</Text>
           
