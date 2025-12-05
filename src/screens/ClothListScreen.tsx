@@ -19,6 +19,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 const CATEGORIES = ["アウター", "トップス", "ボトムス", "ワンピース", "シューズ", "小物"];
 const CLOTHES_CACHE_KEY = 'CLOTHES_CACHE';
+const CACHE_EXPIRATION_MS = 50 * 60 * 1000;
 
 export default function ClothListScreen({ navigation }: any) {
   const [loadedData, setLoadedData] = useState<{ [key: string]: any[] }>({});
@@ -32,6 +33,7 @@ export default function ClothListScreen({ navigation }: any) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [editData, setEditData] = useState<any>(null);
   const [tempImageUrl, setTempImageUrl] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
   
   // ガイド表示用ステート
   const [showCameraGuide, setShowCameraGuide] = useState(false);
@@ -71,10 +73,25 @@ export default function ClothListScreen({ navigation }: any) {
       if (!forceRefresh) {
         const cached = await AsyncStorage.getItem(CLOTHES_CACHE_KEY);
         if (cached) {
-          setLoadedData(JSON.parse(cached));
-          setIsLoading(false);
-          // キャッシュがあっても裏で更新するかは要件次第ですが、通信削減のためここではreturn
-          return;
+          const parsed = JSON.parse(cached);
+          
+          // ★修正: データ構造が { timestamp, data } か、古い形式(配列直下)かで分岐
+          const cachedData = parsed.data || parsed; // 新形式ならdata, 旧形式ならそのまま
+          const timestamp = parsed.timestamp || 0;
+          
+          // ★追加: 経過時間をチェック
+          const now = Date.now();
+          const isExpired = (now - timestamp) > CACHE_EXPIRATION_MS;
+
+          if (!isExpired) {
+            // 有効期限内ならキャッシュを使う
+            setLoadedData(cachedData);
+            setIsLoading(false);
+            return;
+          } else {
+            // 期限切れならログを出して、API取得へ進む (キャッシュは使わない)
+            console.log("Cache expired, fetching fresh URLs...");
+          }
         }
       }
 
@@ -93,7 +110,12 @@ export default function ClothListScreen({ navigation }: any) {
       });
       
       setLoadedData(grouped);
-      await AsyncStorage.setItem(CLOTHES_CACHE_KEY, JSON.stringify(grouped));
+      
+      // ★修正: タイムスタンプと一緒に保存
+      await AsyncStorage.setItem(CLOTHES_CACHE_KEY, JSON.stringify({
+        timestamp: Date.now(),
+        data: grouped
+      }));
 
     } catch (e) {
       console.error(e);
@@ -120,8 +142,10 @@ export default function ClothListScreen({ navigation }: any) {
     setProcessMessage("画像をアップロードして\nAI解析中...");
     
     try {
-      const { uploadUrl, imageUrl } = await api.getUploadUrl('jpg');
+      const response = await api.getUploadUrl('jpg');
+      const { uploadUrl, imageUrl, downloadUrl } = response;
       setTempImageUrl(imageUrl);
+      setPreviewUrl(downloadUrl);
       await uploadToS3(uploadUrl, uri);
       
       const userId = await getUserId();
@@ -315,7 +339,7 @@ export default function ClothListScreen({ navigation }: any) {
             <ScrollView contentContainerStyle={tw`p-6 pb-40`}>
               <Text style={tw`text-center font-bold text-gray-700 mb-6`}>これで登録しますか？</Text>
               <View style={tw`items-center mb-8`}>
-                {tempImageUrl ? <Image source={{ uri: tempImageUrl }} style={[tw`w-40 h-40 rounded-xl bg-gray-100`, { resizeMode: 'cover' }]} /> : <View style={tw`items-center mb-8 h-40 justify-center`}><ActivityIndicator color="#00255C" /></View>}
+                {tempImageUrl ? <Image source={{ uri: previewUrl }} style={[tw`w-40 h-40 rounded-xl bg-gray-100`, { resizeMode: 'cover' }]} /> : <View style={tw`items-center mb-8 h-40 justify-center`}><ActivityIndicator color="#00255C" /></View>}
               </View>
               {editData && (
                 <View style={tw`gap-4`}>

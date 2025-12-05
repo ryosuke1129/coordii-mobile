@@ -58,7 +58,7 @@ export default function SplashScreen({ navigation }: any) {
         <LottieView
           source={require('../../assets/splash.json')} // ★ここにJSONファイルを置く
           autoPlay
-          loop={false} // 1回再生して終わり
+          loop
           style={{ width: '100%', height: '100%' }}
         />
       </View>

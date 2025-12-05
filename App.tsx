@@ -8,7 +8,6 @@ import { StatusBar } from 'expo-status-bar';
 import tw from 'twrnc';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// 各スクリーンのインポート
 import SetupScreen from './src/screens/SetupScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import ClothListScreen from './src/screens/ClothListScreen';
@@ -17,79 +16,60 @@ import SettingsScreen from './src/screens/SettingsScreen';
 import ClothDetailScreen from './src/screens/ClothDetailScreen';
 import SplashScreen from './src/screens/SplashScreen';
 import Header from './src/components/Header';
-import { api } from './src/utils/api';
-import { getUserId } from './src/utils/user';
 import OnboardingTooltip from './src/components/OnboardingTooltip';
+import CoordLoadingModal from './src/components/CoordLoadingModal'; // ★追加
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
-// --- MainTabs ---
-function MainTabs({ route }: any) {
-  const params = route.params || {};
-  const [loading, setLoading] = useState(false);
+function MainTabs() {
   const [result, setResult] = useState(null);
   const [showResult, setShowResult] = useState(false);
   
-  // ガイド表示用のステート
-  const [showClosetGuide, setShowClosetGuide] = useState(false); // ①
-  const [showCoordGuide, setShowCoordGuide] = useState(false);   // ③
+  // ★追加: 生成中モーダルの表示管理
+  const [showLoading, setShowLoading] = useState(false);
 
-  // ガイド表示チェック
+  // ガイド表示用
+  const [showClosetGuide, setShowClosetGuide] = useState(false);
+  const [showCoordGuide, setShowCoordGuide] = useState(false);
+
   useEffect(() => {
     checkGuides();
-
-    // アップロード完了イベントを受け取ったら「コーデ開始ガイド」を出す準備
     const uploadSub = DeviceEventEmitter.addListener('FIRST_UPLOAD_DONE', async () => {
-      // まだコーデガイドを見ていない場合のみ表示
       const hasSeen = await AsyncStorage.getItem('HAS_SEEN_COORD_GUIDE');
-      if (!hasSeen) {
-        setShowCoordGuide(true);
-      }
+      if (!hasSeen) setShowCoordGuide(true);
     });
-
     return () => uploadSub.remove();
   }, []);
 
   const checkGuides = async () => {
-    // ① クローゼット誘導: まだ見てなければ表示
     const hasSeenCloset = await AsyncStorage.getItem('HAS_SEEN_CLOSET_GUIDE');
-    if (!hasSeenCloset) {
-      setShowClosetGuide(true);
-    }
+    if (!hasSeenCloset) setShowClosetGuide(true);
   };
 
-  // ① ガイドを閉じる処理 (クローゼットへ移動したとみなす)
   const dismissClosetGuide = async () => {
     setShowClosetGuide(false);
     await AsyncStorage.setItem('HAS_SEEN_CLOSET_GUIDE', 'true');
   };
 
-  // ③ ガイドを閉じる処理
   const dismissCoordGuide = async () => {
     setShowCoordGuide(false);
     await AsyncStorage.setItem('HAS_SEEN_COORD_GUIDE', 'true');
   };
 
-  const handleCoordStart = async () => {
-    const currentUserId = await getUserId();
-    if (!currentUserId) {
-      Alert.alert("エラー", "ユーザーIDが見つかりません。再起動してください。");
-      return;
-    }
-    setLoading(true);
-    try {
-      const data = await api.createCoordinate(currentUserId);
-      setResult(data);
-      setShowResult(true);
-      DeviceEventEmitter.emit('REFRESH_HOME');
-    } catch (e: any) {
-      Alert.alert("エラー", "コーデの作成に失敗しました: " + e.message);
-    } finally {
-      setLoading(false);
-    }
+  // ★修正: 生成完了時の処理
+  const handleCoordComplete = (data: any) => {
+    setShowLoading(false); // ロード閉じる
+    setResult(data);
+    setShowResult(true);   // 結果開く
+    DeviceEventEmitter.emit('REFRESH_HOME');
   };
-  
+
+  // ★修正: 生成開始（アラート後にモーダルを開く）
+  const startCoordProcess = () => {
+    setShowLoading(true);
+  };
+
   return (
     <>
       <Tab.Navigator
@@ -107,7 +87,6 @@ function MainTabs({ route }: any) {
         <Tab.Screen 
           name="HomeTab" 
           component={HomeScreen} 
-          initialParams={params}
           options={{
             tabBarLabel: 'コーデ',
             tabBarIcon: ({ color }) => <Ionicons name="home" size={24} color={color} />,
@@ -122,10 +101,10 @@ function MainTabs({ route }: any) {
               dismissCoordGuide();
               Alert.alert(
                 "確認",
-                "コーデを開始しますか？\n（※生成には10〜20秒程度かかります）",
+                "コーデを開始しますか？",
                 [
                   { text: "戻る", style: "cancel" },
-                  { text: "開始", onPress: () => handleCoordStart() }
+                  { text: "開始", onPress: startCoordProcess } // ★ここを変更
                 ]
               );
             },
@@ -146,11 +125,8 @@ function MainTabs({ route }: any) {
         <Tab.Screen 
           name="ClothListTab" 
           component={ClothListScreen}
-          // ★修正: ここにスペースを追加しました
           listeners={() => ({
-            tabPress: () => {
-              dismissClosetGuide();
-            }
+            tabPress: () => { dismissClosetGuide(); }
           })}
           options={{
             tabBarLabel: 'クローゼット',
@@ -159,39 +135,22 @@ function MainTabs({ route }: any) {
         />
       </Tab.Navigator>
 
-      {loading && (
-        <View style={tw`absolute inset-0 bg-black/50 items-center justify-center z-50 w-full h-full`}>
-          <View style={tw`bg-white p-8 rounded-2xl items-center`}>
-            <ActivityIndicator size="large" color="#00255C" />
-            <Text style={tw`mt-4 font-bold text-gray-700`}>AIがコーデを考え中...</Text>
-          </View>
-        </View>
-      )}
+      {/* ガイド */}
+      {showClosetGuide && <OnboardingTooltip text="まずは「クローゼット」で洋服を登録しましょう！" position="bottom-right" onPress={dismissClosetGuide} />}
+      {showCoordGuide && !showClosetGuide && <OnboardingTooltip text="ここからAIコーデを始められます！" position="bottom-center" onPress={dismissCoordGuide} />}
 
-      {/* ① 初回ホーム訪問時: クローゼットへ誘導 */}
-      {showClosetGuide && !loading && (
-        <OnboardingTooltip 
-          text="まずは「クローゼット」で洋服を登録しましょう！"
-          position="bottom-right"
-          onPress={dismissClosetGuide}
-        />
-      )}
-
-      {/* ③ 洋服登録後: コーデ開始へ誘導 */}
-      {showCoordGuide && !loading && !showClosetGuide && (
-        <OnboardingTooltip 
-          text="トップスとボトムスを登録したらAIコーデを始めましょう！"
-          position="bottom-center"
-          onPress={dismissCoordGuide}
-        />
-      )}
+      {/* ★追加: 生成中モーダル */}
+      <CoordLoadingModal 
+        visible={showLoading}
+        onClose={() => setShowLoading(false)}
+        onComplete={handleCoordComplete}
+      />
 
       <ResultScreen visible={showResult} onClose={() => setShowResult(false)} resultData={result} />
     </>
   );
 }
 
-// --- App Component ---
 export default function App() {
   return (
     <>

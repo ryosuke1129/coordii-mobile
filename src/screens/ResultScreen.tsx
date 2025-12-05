@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, Image, ScrollView, Modal, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import tw from 'twrnc';
+import TryOnModal from '../components/TryOnModal';
 
 type ResultProps = {
   visible: boolean;
@@ -10,6 +11,7 @@ type ResultProps = {
 };
 
 export default function ResultScreen({ visible, onClose, resultData }: ResultProps) {
+  const [showTryOn, setShowTryOn] = useState(false);
   if (!resultData) return null;
 
   return (
@@ -49,6 +51,15 @@ export default function ResultScreen({ visible, onClose, resultData }: ResultPro
               {resultData.reason}
             </Text>
           </View>
+          
+          {/* ★追加: 試着ボタン */}
+          <TouchableOpacity
+            onPress={() => setShowTryOn(true)}
+            style={tw`mb-8 bg-gradient-to-r from-indigo-500 to-purple-500 bg-[#00255C] p-4 rounded-xl flex-row justify-center items-center shadow-md`}
+          >
+            <Ionicons name="body" size={20} color="white" style={{ marginRight: 8 }} />
+            <Text style={tw`text-white font-bold text-lg`}>バーチャル試着する (Beta)</Text>
+          </TouchableOpacity>
 
           {/* アイテムリスト表示 */}
           <View style={tw`gap-6`}>
@@ -88,6 +99,13 @@ export default function ResultScreen({ visible, onClose, resultData }: ResultPro
             <Text style={tw`text-white text-center text-lg font-bold`}>閉じる</Text>
           </TouchableOpacity>
         </View>
+
+        {/* ★追加: 試着モーダル */}
+        <TryOnModal 
+          visible={showTryOn} 
+          onClose={() => setShowTryOn(false)} 
+          coordinateId={resultData.createDatetime} // IDとして日時を使用(DBのKey)
+        />
 
       </View>
     </Modal>
