@@ -41,8 +41,15 @@ export const api = {
     client('/clothes', 'DELETE', { userId, clothId }),
   analyzeCloth: (imageUrl: string, userId: string) => client('/analyze', 'POST', { imageUrl, userId }),
   getUploadUrl: (fileType: string = 'jpg') => client('/upload-url', 'POST', { fileType }),
-  createCoordinate: (userId: string, anchorClothId?: number) =>  client('/coordinates', 'POST', { userId, anchorClothId }),
+  startCreateCoordinate: (userId: string, anchorClothId?: number) => 
+    client('/coordinates', 'POST', { userId, anchorClothId }),
+  checkCoordinateStatus: (userId: string, coordinateId: string) =>
+    client(`/coordinates/status?userId=${userId}&coordinateId=${coordinateId}`, 'GET'),
   getHistory: (userId: string) => client(`/coordinates?userId=${userId}`),
+  startTryOn: (userId: string, coordinateId: string) => 
+    client('/try-on', 'POST', { userId, coordinateId }),
+  checkTryOn: (userId: string, coordinateId: string) => 
+    client(`/try-on?userId=${userId}&coordinateId=${coordinateId}`, 'GET'),
 };
 
 // ★修正: LegacyのuploadAsyncを使用

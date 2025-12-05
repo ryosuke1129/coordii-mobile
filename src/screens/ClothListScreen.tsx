@@ -19,6 +19,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 const CATEGORIES = ["アウター", "トップス", "ボトムス", "ワンピース", "シューズ", "小物"];
 const CLOTHES_CACHE_KEY = 'CLOTHES_CACHE';
+const CACHE_EXPIRATION_MS = 50 * 60 * 1000;
 
 export default function ClothListScreen({ navigation }: any) {
   const [loadedData, setLoadedData] = useState<{ [key: string]: any[] }>({});
@@ -72,10 +73,25 @@ export default function ClothListScreen({ navigation }: any) {
       if (!forceRefresh) {
         const cached = await AsyncStorage.getItem(CLOTHES_CACHE_KEY);
         if (cached) {
-          setLoadedData(JSON.parse(cached));
-          setIsLoading(false);
-          // キャッシュがあっても裏で更新するかは要件次第ですが、通信削減のためここではreturn
-          return;
+          const parsed = JSON.parse(cached);
+          
+          // ★修正: データ構造が { timestamp, data } か、古い形式(配列直下)かで分岐
+          const cachedData = parsed.data || parsed; // 新形式ならdata, 旧形式ならそのまま
+          const timestamp = parsed.timestamp || 0;
+          
+          // ★追加: 経過時間をチェック
+          const now = Date.now();
+          const isExpired = (now - timestamp) > CACHE_EXPIRATION_MS;
+
+          if (!isExpired) {
+            // 有効期限内ならキャッシュを使う
+            setLoadedData(cachedData);
+            setIsLoading(false);
+            return;
+          } else {
+            // 期限切れならログを出して、API取得へ進む (キャッシュは使わない)
+            console.log("Cache expired, fetching fresh URLs...");
+          }
         }
       }
 
@@ -94,7 +110,12 @@ export default function ClothListScreen({ navigation }: any) {
       });
       
       setLoadedData(grouped);
-      await AsyncStorage.setItem(CLOTHES_CACHE_KEY, JSON.stringify(grouped));
+      
+      // ★修正: タイムスタンプと一緒に保存
+      await AsyncStorage.setItem(CLOTHES_CACHE_KEY, JSON.stringify({
+        timestamp: Date.now(),
+        data: grouped
+      }));
 
     } catch (e) {
       console.error(e);

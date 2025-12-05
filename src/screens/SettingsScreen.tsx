@@ -4,13 +4,12 @@ import {
   ActivityIndicator, KeyboardAvoidingView, Platform, SafeAreaView, 
   StatusBar, DeviceEventEmitter, LayoutAnimation, UIManager 
 } from 'react-native';
-// ★修正: TouchableWithoutFeedback, Keyboard は不要になったので削除してOK
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import tw from 'twrnc';
-import * as Updates from 'expo-updates'; // ★追加: アプリリロード用
-import AsyncStorage from '@react-native-async-storage/async-storage'; // ★追加: データ消去用
+import * as Updates from 'expo-updates';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api, uploadToS3 } from '../utils/api';
 import { getUserId } from '../utils/user';
 
@@ -28,16 +27,21 @@ const WEEKDAYS = [
   { key: 'Sun', label: '日曜日' },
 ];
 
-const STYLES = ["指定なし", "オフィスカジュアル", "スーツ/ビジネス", "カジュアル", "ラフ/リラックス", "きれいめ", "デート", "アクティブ"];
+const STYLES = ["指定なし", "オフィスカジュアル", "スーツ/ビジネス", "カジュアル", "ラフ/リラックス", "デート/きれいめ", "アクティブ"];
 
 export default function SettingsScreen({ navigation }: any) {
-  // --- (ステート定義などは変更なし) ---
   const [gender, setGender] = useState('男性');
   const [birthDate, setBirthDate] = useState<Date | null>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [height, setHeight] = useState('');
   const [region, setRegion] = useState('');
-  const [profileImage, setProfileImage] = useState<string | null>(null);
+  
+  const [displayImage, setDisplayImage] = useState<string | null>(null);
+  const [saveImage, setSaveImage] = useState<string | null>(null);
+  
+  // ★追加: 画像アップロード中のフラグ
+  const [isImageUploading, setIsImageUploading] = useState(false);
+
   const [weeklySchedule, setWeeklySchedule] = useState<{ [key: string]: string }>({});
   const [isFetching, setIsFetching] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -49,12 +53,18 @@ export default function SettingsScreen({ navigation }: any) {
         const userId = await getUserId();
         if (!userId) return;
         const data = await api.getUser(userId);
+        
         if (data.gender) setGender(data.gender);
         if (data.birthDay) setBirthDate(new Date(data.birthDay));
         if (data.height) setHeight(String(data.height));
         if (data.address) setRegion(data.address);
-        if (data.imageLink) setProfileImage(data.imageLink);
         if (data.weeklySchedule) setWeeklySchedule(data.weeklySchedule);
+        
+        if (data.signedImageLink) setDisplayImage(data.signedImageLink);
+        else if (data.imageLink) setDisplayImage(data.imageLink);
+
+        if (data.imageLink) setSaveImage(data.imageLink);
+
       } catch (e) {
         console.error("データ取得エラー:", e);
       } finally {
@@ -85,12 +95,29 @@ export default function SettingsScreen({ navigation }: any) {
   };
 
   const uploadImage = async (uri: string) => {
+    setIsImageUploading(true); // ★開始
     try {
-      const { uploadUrl, imageUrl } = await api.getUploadUrl('jpg');
+      // 即座にプレビュー (ローカル)
+      setDisplayImage(uri);
+
+      const response = await api.getUploadUrl('jpg');
+      const { uploadUrl, imageUrl, downloadUrl } = response;
+      
       await uploadToS3(uploadUrl, uri);
-      setProfileImage(imageUrl);
+      
+      // 保存用URL更新
+      setSaveImage(imageUrl);
+      
+      // 表示用URL更新 (署名付き)
+      if (downloadUrl) {
+        setDisplayImage(downloadUrl);
+      }
+      
     } catch (e) {
       Alert.alert("エラー", "画像のアップロードに失敗しました");
+      // 失敗したら表示も戻す等の処理が必要かもしれませんが、今回はそのまま
+    } finally {
+      setIsImageUploading(false); // ★終了
     }
   };
 
@@ -119,10 +146,13 @@ export default function SettingsScreen({ navigation }: any) {
         birthDay: birthDateString,
         height: parseInt(height) || 0,
         address: region,
-        imageLink: profileImage,
+        imageLink: saveImage, // ここに正しいURLが入っていることが重要
         weeklySchedule: weeklySchedule
       });
+
+      DeviceEventEmitter.emit('REFRESH_PROFILE');
       DeviceEventEmitter.emit('REGION_CHANGED', region);
+      
       Alert.alert("完了", "設定を保存しました", [{ text: "OK", onPress: () => navigation.goBack() }]);
     } catch (e: any) {
       Alert.alert("エラー", e.message);
@@ -131,11 +161,10 @@ export default function SettingsScreen({ navigation }: any) {
     }
   };
 
-  // ★追加: デバッグ用リセット機能
   const handleReset = async () => {
     Alert.alert(
       "初期化（デバッグ用）",
-      "端末内のデータを消去し、アプリを初期状態に戻しますか？\n（サーバー上のデータは残ります）",
+      "端末内のデータを消去し、アプリを初期状態に戻しますか？",
       [
         { text: "キャンセル", style: "cancel" },
         {
@@ -143,12 +172,10 @@ export default function SettingsScreen({ navigation }: any) {
           style: "destructive",
           onPress: async () => {
             try {
-              // ローカルストレージを全消去
               await AsyncStorage.clear();
-              // アプリをリロード (Expo Go再起動)
               await Updates.reloadAsync();
             } catch (e) {
-              Alert.alert("エラー", "リロードに失敗しました。手動でアプリを再起動してください。");
+              Alert.alert("エラー", "リロードに失敗しました");
             }
           }
         }
@@ -156,10 +183,8 @@ export default function SettingsScreen({ navigation }: any) {
     );
   };
 
-  // ★修正: TouchableWithoutFeedback を削除し、Viewをルートにする
   return (
     <View style={tw`flex-1 bg-gray-50`}>
-      {/* ヘッダー */}
       <View style={tw`bg-[#00255C]`}>
         <SafeAreaView>
           <View style={[tw`flex-row items-center justify-between px-4 pb-4`, Platform.OS === 'android' ? { paddingTop: StatusBar.currentHeight || 24 } : { paddingTop: 10 }]}>
@@ -178,22 +203,30 @@ export default function SettingsScreen({ navigation }: any) {
         ) : (
           <ScrollView 
             contentContainerStyle={tw`p-6 pb-40`}
-            // ★修正: キーボード制御のプロパティを追加
-            keyboardShouldPersistTaps="handled" // ボタンタップなどを優先
-            keyboardDismissMode="on-drag"       // スクロール開始でキーボードを閉じる
+            keyboardShouldPersistTaps="handled" 
+            keyboardDismissMode="on-drag"       
           >
             {/* プロフィール画像 */}
             <View style={tw`items-center mb-8`}>
-              <TouchableOpacity onPress={handleImagePick} style={tw`relative`}>
+              <TouchableOpacity onPress={handleImagePick} style={tw`relative`} disabled={isImageUploading}>
                 <View style={tw`w-28 h-28 rounded-full bg-gray-200 border-4 border-white shadow-sm items-center justify-center overflow-hidden`}>
-                  {profileImage ? <Image source={{ uri: profileImage }} style={tw`w-full h-full`} /> : <Ionicons name="person" size={60} color="#9ca3af" />}
+                  {displayImage ? (
+                    <Image source={{ uri: displayImage }} style={tw`w-full h-full`} />
+                  ) : (
+                    <Ionicons name="person" size={60} color="#9ca3af" />
+                  )}
+                  {/* ★追加: アップロード中のインジケータ */}
+                  {isImageUploading && (
+                    <View style={tw`absolute inset-0 bg-black/40 items-center justify-center`}>
+                      <ActivityIndicator color="white" />
+                    </View>
+                  )}
                 </View>
                 <View style={tw`absolute bottom-0 right-0 bg-[#00255C] p-2 rounded-full border-2 border-white`}><Ionicons name="camera" size={16} color="white" /></View>
               </TouchableOpacity>
             </View>
 
             <View style={tw`gap-5`}>
-              {/* 性別・生年月日・身長・地域の入力フォーム (中身は変更なし) */}
               <View>
                 <Text style={tw`text-gray-500 text-xs font-bold mb-2`}>性別</Text>
                 <View style={tw`flex-row justify-between`}>
@@ -231,7 +264,6 @@ export default function SettingsScreen({ navigation }: any) {
                 <Text style={tw`text-[10px] text-gray-400 mt-1 ml-1`}>※変更すると天気予報の地域が変わります</Text>
               </View>
 
-              {/* 曜日設定 (アコーディオン式) */}
               <View style={tw`mt-4 pt-6 border-t border-gray-200`}>
                 <Text style={tw`text-gray-800 font-bold text-base mb-1`}>曜日ごとのスタイル設定</Text>
                 <Text style={tw`text-gray-400 text-xs mb-4`}>
@@ -245,46 +277,24 @@ export default function SettingsScreen({ navigation }: any) {
                     const isActive = currentStyle !== "指定なし";
                     
                     return (
-                      <View 
-                        key={day.key} 
-                        style={tw`bg-white rounded-xl border ${isActive || isExpanded ? 'border-[#00255C]' : 'border-gray-200'} overflow-hidden shadow-sm`}
-                      >
-                        <TouchableOpacity 
-                          onPress={() => toggleAccordion(day.key)}
-                          activeOpacity={0.7}
-                          style={tw`p-4 flex-row justify-between items-center bg-white`}
-                        >
+                      <View key={day.key} style={tw`bg-white rounded-xl border ${isActive || isExpanded ? 'border-[#00255C]' : 'border-gray-200'} overflow-hidden shadow-sm`}>
+                        <TouchableOpacity onPress={() => toggleAccordion(day.key)} activeOpacity={0.7} style={tw`p-4 flex-row justify-between items-center bg-white`}>
                           <View style={tw`flex-row items-center gap-4`}>
-                            <View style={tw`w-8 h-8 rounded-full bg-gray-100 items-center justify-center`}>
-                              <Text style={tw`font-bold text-gray-600 text-xs`}>{day.label[0]}</Text>
-                            </View>
+                            <View style={tw`w-8 h-8 rounded-full bg-gray-100 items-center justify-center`}><Text style={tw`font-bold text-gray-600 text-xs`}>{day.label[0]}</Text></View>
                             <Text style={tw`font-bold text-gray-700 text-sm`}>{day.label}</Text>
                           </View>
                           <View style={tw`flex-row items-center gap-2`}>
-                            <Text style={[tw`text-xs font-bold`, isActive ? tw`text-[#00255C]` : tw`text-gray-400`]}>
-                              {currentStyle}
-                            </Text>
-                            <Ionicons 
-                              name={isExpanded ? "chevron-up" : "chevron-down"} 
-                              size={16} 
-                              color={isActive || isExpanded ? "#00255C" : "#ccc"} 
-                            />
+                            <Text style={[tw`text-xs font-bold`, isActive ? tw`text-[#00255C]` : tw`text-gray-400`]}>{currentStyle}</Text>
+                            <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={16} color={isActive || isExpanded ? "#00255C" : "#ccc"} />
                           </View>
                         </TouchableOpacity>
-
                         {isExpanded && (
                           <View style={tw`border-t border-gray-100 bg-gray-50 px-2 py-2`}>
                             {STYLES.map((style) => {
                               const isSelected = currentStyle === style;
                               return (
-                                <TouchableOpacity
-                                  key={style}
-                                  onPress={() => selectStyle(day.key, style)}
-                                  style={tw`p-3 rounded-lg flex-row justify-between items-center ${isSelected ? 'bg-white shadow-sm' : ''}`}
-                                >
-                                  <Text style={[tw`text-sm font-bold`, isSelected ? tw`text-[#00255C]` : tw`text-gray-500`]}>
-                                    {style}
-                                  </Text>
+                                <TouchableOpacity key={style} onPress={() => selectStyle(day.key, style)} style={tw`p-3 rounded-lg flex-row justify-between items-center ${isSelected ? 'bg-white shadow-sm' : ''}`}>
+                                  <Text style={[tw`text-sm font-bold`, isSelected ? tw`text-[#00255C]` : tw`text-gray-500`]}>{style}</Text>
                                   {isSelected && <Ionicons name="checkmark-circle" size={20} color="#00255C" />}
                                 </TouchableOpacity>
                               );
@@ -297,12 +307,8 @@ export default function SettingsScreen({ navigation }: any) {
                 </View>
               </View>
 
-              {/* ★追加: デバッグ用リセットボタンエリア */}
               <View style={tw`mt-10 pt-6 border-t border-gray-200 items-center`}>
-                 <TouchableOpacity 
-                    onPress={handleReset}
-                    style={tw`flex-row items-center gap-2 p-4`}
-                 >
+                 <TouchableOpacity onPress={handleReset} style={tw`flex-row items-center gap-2 p-4`}>
                    <Ionicons name="alert-circle-outline" size={20} color="#ef4444" />
                    <Text style={tw`text-red-500 font-bold`}>デバッグ: アプリを初期化</Text>
                  </TouchableOpacity>
@@ -315,8 +321,22 @@ export default function SettingsScreen({ navigation }: any) {
 
       {!isFetching && (
         <View style={tw`absolute bottom-0 w-full p-6 bg-white border-t border-gray-100`}>
-          <TouchableOpacity onPress={handleSave} disabled={isSaving} style={tw`w-full bg-[#00255C] py-4 rounded-full shadow-lg flex-row justify-center`}>
-            {isSaving ? <ActivityIndicator color="white" /> : <Text style={tw`text-white text-center text-lg font-bold`}>設定を保存</Text>}
+          {/* ★修正: アップロード中は保存ボタンを無効化 */}
+          <TouchableOpacity 
+            onPress={handleSave} 
+            disabled={isSaving || isImageUploading} 
+            style={[
+              tw`w-full py-4 rounded-full shadow-lg flex-row justify-center`,
+              (isSaving || isImageUploading) ? tw`bg-gray-400` : tw`bg-[#00255C]`
+            ]}
+          >
+            {isSaving ? (
+              <ActivityIndicator color="white" />
+            ) : isImageUploading ? (
+              <Text style={tw`text-white text-center text-lg font-bold`}>アップロード中...</Text>
+            ) : (
+              <Text style={tw`text-white text-center text-lg font-bold`}>設定を保存</Text>
+            )}
           </TouchableOpacity>
         </View>
       )}
